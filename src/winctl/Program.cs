@@ -12,11 +12,13 @@ namespace WinCtl
     internal record WindowInfo(
         string Title, string Process, int Pid,
         int Width, int Height, int X, int Y,
-        string State, int Monitor, bool Topmost);
+        string State, int Monitor, bool Topmost,
+        int ScalePercent);
 
     internal record MonitorData(int Number, string Device,
         int Width, int Height, int X, int Y,
-        int WorkLeft, int WorkTop, int WorkWidth, int WorkHeight, bool Primary);
+        int WorkLeft, int WorkTop, int WorkWidth, int WorkHeight, bool Primary,
+        int ScalePercent);
 
     [JsonSerializable(typeof(WindowInfo))]
     [JsonSerializable(typeof(List<WindowInfo>))]
@@ -102,10 +104,21 @@ namespace WinCtl
         private const int GWL_EXSTYLE = -20;
         private const int WS_EX_TOPMOST = 0x00000008;
 
+        [DllImport("user32.dll")]
+        private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+
+        [DllImport("shcore.dll")]
+        private static extern int GetDpiForMonitor(IntPtr hMonitor, int dpiType, out uint dpiX, out uint dpiY);
+
+        private static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new(-4);
+        private const int MDT_EFFECTIVE_DPI = 0;
+
         #endregion
 
         static int Main(string[] args)
         {
+            SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
             if (args.Length == 0 || args[0] == "--help")
             {
                 PrintUsage();
@@ -508,13 +521,11 @@ Subcommands:
             return "normal";
         }
 
-        private static int GetMonitorNumber(IntPtr hwnd)
+        private static int GetMonitorNumber(IntPtr hMon, List<IntPtr> monitorHandles)
         {
-            var hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-            var monitors = GetMonitorHandles();
-            for (int i = 0; i < monitors.Count; i++)
+            for (int i = 0; i < monitorHandles.Count; i++)
             {
-                if (monitors[i] == hMon) return i + 1;
+                if (monitorHandles[i] == hMon) return i + 1;
             }
             return 1;
         }
@@ -525,7 +536,13 @@ Subcommands:
             return (exStyle & WS_EX_TOPMOST) != 0;
         }
 
-        private static WindowInfo GetWindowInfo(IntPtr hwnd)
+        private static int GetScalePercent(IntPtr hMonitor)
+        {
+            int hr = GetDpiForMonitor(hMonitor, MDT_EFFECTIVE_DPI, out uint dpiX, out _);
+            return hr == 0 ? (int)(dpiX * 100 / 96) : 100;
+        }
+
+        private static WindowInfo GetWindowInfo(IntPtr hwnd, List<IntPtr>? monitorHandles = null)
         {
             var sb = new StringBuilder(256);
             GetWindowText(hwnd, sb, 256);
@@ -536,15 +553,20 @@ Subcommands:
             try { procName = Process.GetProcessById((int)procId).ProcessName + ".exe"; }
             catch { procName = "unknown"; }
 
+            monitorHandles ??= GetMonitorHandles();
+            var hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+
             return new WindowInfo(
                 sb.ToString(), procName, (int)procId,
                 r.Right - r.Left, r.Bottom - r.Top, r.Left, r.Top,
-                GetWindowState(hwnd), GetMonitorNumber(hwnd), IsTopmost(hwnd));
+                GetWindowState(hwnd), GetMonitorNumber(hMon, monitorHandles), IsTopmost(hwnd),
+                GetScalePercent(hMon));
         }
 
         private static List<WindowInfo> EnumerateWindows(string? filter)
         {
             var results = new List<WindowInfo>();
+            var monitorHandles = GetMonitorHandles();
 
             EnumWindows((hWnd, _) =>
             {
@@ -558,7 +580,7 @@ Subcommands:
                 if (filter != null && !t.Contains(filter, StringComparison.OrdinalIgnoreCase))
                     return true;
 
-                results.Add(GetWindowInfo(hWnd));
+                results.Add(GetWindowInfo(hWnd, monitorHandles));
                 return true;
             }, IntPtr.Zero);
 
@@ -582,7 +604,8 @@ Subcommands:
                     mi.rcWork.Left, mi.rcWork.Top,
                     mi.rcWork.Right - mi.rcWork.Left,
                     mi.rcWork.Bottom - mi.rcWork.Top,
-                    (mi.dwFlags & 1) != 0));
+                    (mi.dwFlags & 1) != 0,
+                    GetScalePercent(handles[i])));
             }
 
             return result;

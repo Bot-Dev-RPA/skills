@@ -8,6 +8,8 @@ namespace Screenshot
     {
         static int Main(string[] args)
         {
+            SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
             if (args.Length == 0 || args[0] == "--help")
             {
                 PrintUsage();
@@ -263,6 +265,11 @@ Output:
         private const int SM_YVIRTUALSCREEN = 77;
         private const int SM_CXVIRTUALSCREEN = 78;
         private const int SM_CYVIRTUALSCREEN = 79;
+
+        [DllImport("user32.dll")]
+        private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+
+        private static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new(-4);
 
         #endregion
 
