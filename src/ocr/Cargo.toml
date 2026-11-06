@@ -1,6 +1,6 @@
 [package]
 name = "oneocr"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "CLI and library for OCR of images and PDFs using Windows Snipping Tool's oneocr engine"
 license = "MIT"

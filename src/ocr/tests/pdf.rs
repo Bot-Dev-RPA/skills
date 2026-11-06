@@ -117,6 +117,27 @@ fn dpi_sets_the_rendered_page_size() {
     assert!(at_150["pages"][0]["text"].as_str().unwrap().contains("Hello"));
 }
 
+// The fixture's first page is 400 pixels at 100 per inch, so it is 4 inches wide.
+const FIRST_PAGE_INCHES: f64 = 4.0;
+
+#[test]
+fn dpi_gives_true_pixels_per_inch_whatever_the_display_scaling() {
+    for dpi in [150.0, 300.0] {
+        let json = run_json(&fixture(SCANNED_PDF), &["--dpi", &dpi.to_string()]);
+        let width = json["pages"][0]["width"].as_f64().unwrap();
+        let expected = FIRST_PAGE_INCHES * dpi;
+        assert!((width - expected).abs() <= 2.0, "at {dpi} DPI expected {expected}, got {width}");
+    }
+}
+
+#[test]
+fn default_resolution_is_300_dpi() {
+    let json = run_json(&fixture(SCANNED_PDF), &[]);
+    let width = json["pages"][0]["width"].as_f64().unwrap();
+    let expected = FIRST_PAGE_INCHES * 300.0;
+    assert!((width - expected).abs() <= 2.0, "expected {expected}, got {width}");
+}
+
 #[test]
 fn dpi_outside_the_supported_range_is_rejected() {
     for dpi in ["0", "71", "1201"] {

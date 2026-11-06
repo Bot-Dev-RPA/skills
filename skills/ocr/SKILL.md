@@ -109,7 +109,7 @@ cat image.png | "$EXE" -
 
 ## Notes
 
-- A 206-page scanned PDF took about 2 minutes at 300 DPI and about 94 seconds at 200 DPI on a 16-core PC
+- A 206-page scanned PDF took about 100 seconds at the default 300 DPI on a 16-core PC
 - PDF JSON runs to about 80 KB per page, so write long PDFs to a file with `> scan.json` and read what you need from there
 - Password-protected PDFs are not supported, and the tool reports them as an error
 - Any failed page fails the whole run, so a successful run has read every page
