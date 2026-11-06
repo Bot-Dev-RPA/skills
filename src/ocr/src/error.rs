@@ -31,4 +31,13 @@ pub enum OcrError {
 
     #[error("null byte in path")]
     NulInPath(#[from] std::ffi::NulError),
+
+    #[error("cannot resolve PDF path {path}: {reason}")]
+    PdfPath { path: String, reason: String },
+
+    #[error("PDF: {0}")]
+    Pdf(#[from] windows::core::Error),
+
+    #[error("password-protected PDFs are not supported")]
+    PdfPasswordProtected,
 }

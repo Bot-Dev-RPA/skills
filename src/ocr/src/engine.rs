@@ -1,6 +1,9 @@
 use std::ffi::{c_char, CStr, CString};
 use std::path::{Path, PathBuf};
 
+use windows::core::HSTRING;
+use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVE_FILE_FLAGS};
+
 use crate::error::OcrError;
 use crate::ffi::{FfiBoundingBox, FfiImage, OcrLibrary};
 use crate::types::{BoundingBox, OcrImage, OcrLine, OcrResult, OcrWord};
@@ -14,7 +17,7 @@ const ENGINE_FILES: &[&str] = &["oneocr.dll", MODEL_FILE, "onnxruntime.dll"];
 // ---------------------------------------------------------------------------
 
 fn engine_dir_ready(dir: &Path) -> bool {
-    dir.join("oneocr.dll").exists() && dir.join(MODEL_FILE).exists()
+    ENGINE_FILES.iter().all(|file| dir.join(file).exists())
 }
 
 /// Locate the directory containing `oneocr.dll` and `oneocr.onemodel`.
@@ -112,7 +115,7 @@ pub fn setup_engine(target: &Path, force: bool) -> Result<(), OcrError> {
             continue;
         }
         eprintln!("  copying {}...", file);
-        std::fs::copy(source.join(file), &dst).map_err(|e| OcrError::SetupFailed {
+        copy_into_place(&source.join(file), &dst).map_err(|e| OcrError::SetupFailed {
             hint: format!("failed to copy {}: {}", file, e),
         })?;
     }
@@ -125,6 +128,51 @@ pub fn setup_engine(target: &Path, force: bool) -> Result<(), OcrError> {
 
     eprintln!("Engine setup complete: {}", target.display());
     Ok(())
+}
+
+/// Copy through a private temporary file and publish it complete, so a concurrent process
+/// never sees a partly written engine file. A file already installed from the same source
+/// is left alone, because another process may be reading it.
+fn copy_into_place(source: &Path, target: &Path) -> std::io::Result<()> {
+    if same_version(source, target) {
+        return Ok(());
+    }
+
+    let mut temp_name = target.file_name().unwrap_or_default().to_os_string();
+    temp_name.push(format!(".{}.tmp", std::process::id()));
+    let temp = target.with_file_name(temp_name);
+    std::fs::copy(source, &temp)?;
+
+    let result = if move_unless_target_exists(&temp, target) {
+        Ok(())
+    } else if same_version(source, target) {
+        // Another process published the same file first.
+        std::fs::remove_file(&temp)
+    } else {
+        std::fs::rename(&temp, target)
+    };
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+/// `std::fs::rename` always replaces the target, so this calls the Windows API for a move
+/// that the first process to finish wins.
+fn move_unless_target_exists(from: &Path, to: &Path) -> bool {
+    let (from, to) = (HSTRING::from(from.as_os_str()), HSTRING::from(to.as_os_str()));
+    // SAFETY: both arguments are valid, null-terminated wide strings for the whole call.
+    unsafe { MoveFileExW(&from, &to, MOVE_FILE_FLAGS(0)) }.is_ok()
+}
+
+/// A copy keeps its source's length and last-written time, so these identify the version.
+fn same_version(a: &Path, b: &Path) -> bool {
+    let version = |path: &Path| {
+        let metadata = std::fs::metadata(path).ok()?;
+        Some((metadata.len(), metadata.modified().ok()?))
+    };
+    matches!((version(a), version(b)), (Some(a), Some(b)) if a == b)
 }
 
 // ---------------------------------------------------------------------------
@@ -375,5 +423,102 @@ fn check(code: i64, operation: &'static str) -> Result<(), OcrError> {
         Ok(())
     } else {
         Err(OcrError::DllCall { operation, code })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(name);
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn file_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn set_modified(path: &Path, time: SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+    }
+
+    #[test]
+    fn copy_installs_a_missing_file_and_leaves_no_temporary_copy() {
+        let dir = TempDir::new("oneocr_unit_copy_missing");
+        let source = dir.0.join("source.bin");
+        std::fs::write(&source, b"engine").unwrap();
+        let target = dir.0.join("target.bin");
+
+        copy_into_place(&source, &target).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"engine");
+        assert_eq!(file_names(&dir.0), ["source.bin", "target.bin"]);
+    }
+
+    #[test]
+    fn copy_replaces_a_different_version() {
+        let dir = TempDir::new("oneocr_unit_copy_replace");
+        let source = dir.0.join("source.bin");
+        std::fs::write(&source, b"new engine").unwrap();
+        let target = dir.0.join("target.bin");
+        std::fs::write(&target, b"old").unwrap();
+
+        copy_into_place(&source, &target).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new engine");
+        assert_eq!(file_names(&dir.0), ["source.bin", "target.bin"]);
+    }
+
+    #[test]
+    fn copy_leaves_the_same_version_untouched() {
+        let dir = TempDir::new("oneocr_unit_copy_same");
+        let source = dir.0.join("source.bin");
+        std::fs::write(&source, b"engine").unwrap();
+        let target = dir.0.join("target.bin");
+        std::fs::write(&target, b"ENGINE").unwrap();
+        let time = SystemTime::now() - Duration::from_secs(3600);
+        set_modified(&source, time);
+        set_modified(&target, time);
+
+        copy_into_place(&source, &target).unwrap();
+
+        // Same length and time means no copy, which the differing letter case proves.
+        assert_eq!(std::fs::read(&target).unwrap(), b"ENGINE");
+    }
+
+    #[test]
+    fn engine_dir_is_ready_only_with_every_file() {
+        let dir = TempDir::new("oneocr_unit_ready");
+        assert!(!engine_dir_ready(&dir.0));
+        for file in ["oneocr.dll", MODEL_FILE] {
+            std::fs::write(dir.0.join(file), b"x").unwrap();
+        }
+        assert!(!engine_dir_ready(&dir.0), "onnxruntime.dll is still missing");
+        std::fs::write(dir.0.join("onnxruntime.dll"), b"x").unwrap();
+        assert!(engine_dir_ready(&dir.0));
     }
 }

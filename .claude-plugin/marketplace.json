@@ -25,11 +25,11 @@
       "skills": ["./skills/screenshot"]
     },
     {
-      "name": "oneocr",
-      "description": "Offline OCR to extract text from images, screenshots, or clipboard using Windows Snipping Tool's engine",
+      "name": "ocr",
+      "description": "Free offline OCR for scanned PDFs, images, screenshots, or clipboard using Windows Snipping Tool's engine",
       "source": "./",
       "strict": false,
-      "skills": ["./skills/oneocr"]
+      "skills": ["./skills/ocr"]
     }
   ]
 }

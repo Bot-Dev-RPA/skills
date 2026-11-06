@@ -4,8 +4,8 @@ use serde::Serialize;
 
 use crate::error::OcrError;
 
-const MIN_DIM: u32 = 50;
-const MAX_DIM: u32 = 10_000;
+pub(crate) const MIN_DIM: u32 = 50;
+pub(crate) const MAX_DIM: u32 = 10_000;
 
 // ---------------------------------------------------------------------------
 // OCR result types (public, serializable)
@@ -16,6 +16,24 @@ pub struct OcrResult {
     pub text: String,
     pub text_angle: Option<f32>,
     pub lines: Vec<OcrLine>,
+}
+
+/// OCR results for a whole PDF, in page order.
+#[derive(Debug, Clone, Serialize)]
+pub struct PdfOcrResult {
+    pub pages: Vec<PdfPageResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PdfPageResult {
+    /// Page number, starting at 1.
+    pub page: u32,
+    /// Width in pixels of the rendered page, which the bounding boxes refer to.
+    pub width: u32,
+    /// Height in pixels of the rendered page, which the bounding boxes refer to.
+    pub height: u32,
+    #[serde(flatten)]
+    pub result: OcrResult,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -102,8 +120,8 @@ impl OcrImage {
     pub fn from_rgba(width: u32, height: u32, mut data: Vec<u8>) -> Result<Self, OcrError> {
         validate_dimensions(width, height)?;
         validate_buffer(width, height, &data)?;
-        for chunk in data.chunks_exact_mut(4) {
-            chunk.swap(0, 2); // R <-> B
+        for pixel in data.as_chunks_mut::<4>().0 {
+            pixel.swap(0, 2); // R <-> B
         }
         Ok(Self {
             width,
@@ -157,7 +175,7 @@ fn validate_buffer(width: u32, height: u32, data: &[u8]) -> Result<(), OcrError>
 mod tests {
     use super::*;
 
-    fn bbox(x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, x4: f32, y4: f32) -> BoundingBox {
+    fn bbox([x1, y1, x2, y2, x3, y3, x4, y4]: [f32; 8]) -> BoundingBox {
         BoundingBox { x1, y1, x2, y2, x3, y3, x4, y4 }
     }
 
@@ -166,7 +184,7 @@ mod tests {
     #[test]
     fn bbox_axis_aligned() {
         // Standard rectangle: TL(10,20) TR(100,20) BR(100,50) BL(10,50)
-        let b = bbox(10.0, 20.0, 100.0, 20.0, 100.0, 50.0, 10.0, 50.0);
+        let b = bbox([10.0, 20.0, 100.0, 20.0, 100.0, 50.0, 10.0, 50.0]);
         assert_eq!(b.left(), 10.0);
         assert_eq!(b.right(), 100.0);
         assert_eq!(b.top(), 20.0);
@@ -179,7 +197,7 @@ mod tests {
     fn bbox_rotated_clockwise() {
         // ~30 degree clockwise rotation: vertices shift so any could be extremal
         // TL(20,10) TR(90,30) BR(80,60) BL(10,40)
-        let b = bbox(20.0, 10.0, 90.0, 30.0, 80.0, 60.0, 10.0, 40.0);
+        let b = bbox([20.0, 10.0, 90.0, 30.0, 80.0, 60.0, 10.0, 40.0]);
         assert_eq!(b.left(), 10.0);   // x4
         assert_eq!(b.right(), 90.0);  // x2
         assert_eq!(b.top(), 10.0);    // y1
@@ -190,7 +208,7 @@ mod tests {
     fn bbox_rotated_counterclockwise() {
         // Rotated so bottom-left vertex has smallest x and top-right has largest y
         // TL(30,50) TR(100,20) BR(110,50) BL(40,80)
-        let b = bbox(30.0, 50.0, 100.0, 20.0, 110.0, 50.0, 40.0, 80.0);
+        let b = bbox([30.0, 50.0, 100.0, 20.0, 110.0, 50.0, 40.0, 80.0]);
         assert_eq!(b.left(), 30.0);    // x1
         assert_eq!(b.right(), 110.0);  // x3
         assert_eq!(b.top(), 20.0);     // y2
@@ -199,7 +217,7 @@ mod tests {
 
     #[test]
     fn bbox_zero_size() {
-        let b = bbox(5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0);
+        let b = bbox([5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0]);
         assert_eq!(b.width(), 0.0);
         assert_eq!(b.height(), 0.0);
     }

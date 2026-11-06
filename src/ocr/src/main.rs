@@ -1,18 +1,19 @@
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, ValueEnum};
 
 use oneocr::{
-    resolve_engine_dir, setup_engine, to_spaced_text, to_table_text, OcrEngine, OcrImage, OcrResult,
+    is_pdf_path, resolve_engine_dir, setup_engine, to_spaced_text, to_table_text, OcrEngine,
+    OcrImage, OcrResult, PdfFile, PdfOcrResult, PdfPageResult,
 };
 
 #[derive(Parser)]
 #[command(name = "oneocr")]
-#[command(about = "Extract text from images using Windows Snipping Tool's OCR engine")]
+#[command(about = "Extract text from images and PDFs using Windows Snipping Tool's OCR engine")]
 struct Cli {
-    /// Image file(s) to process. Use '-' for stdin.
+    /// Image or PDF file(s) to process. Use '-' for an image on stdin.
     files: Vec<PathBuf>,
 
     /// Read image from clipboard
@@ -34,6 +35,10 @@ struct Cli {
     /// Force re-copy of engine files from Snipping Tool
     #[arg(long)]
     setup: bool,
+
+    /// Resolution used to render PDF pages
+    #[arg(long, default_value_t = 300, value_parser = clap::value_parser!(u32).range(72..=1200))]
+    dpi: u32,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -61,7 +66,7 @@ fn main() -> Result<()> {
     }
 
     if cli.files.is_empty() && !cli.clipboard {
-        bail!("provide image file(s), --clipboard, or '-' for stdin");
+        bail!("provide image or PDF file(s), --clipboard, or '-' for stdin");
     }
 
     let engine_dir =
@@ -79,6 +84,11 @@ fn main() -> Result<()> {
     }
 
     for path in &cli.files {
+        if is_pdf_path(path) {
+            process_pdf(&engine, path, &cli, multiple, &mut all_text)?;
+            continue;
+        }
+
         let image = if path.as_os_str() == "-" {
             let mut buf = Vec::new();
             std::io::stdin()
@@ -105,6 +115,50 @@ fn main() -> Result<()> {
         let mut cb = arboard::Clipboard::new().context("clipboard init")?;
         cb.set_text(&combined).context("clipboard write")?;
         eprintln!("(copied to clipboard)");
+    }
+
+    Ok(())
+}
+
+fn process_pdf(
+    engine: &OcrEngine,
+    path: &Path,
+    cli: &Cli,
+    multiple: bool,
+    all_text: &mut Vec<String>,
+) -> Result<()> {
+    let name = path.display();
+    let pdf = PdfFile::open(path).with_context(|| format!("loading {name}"))?;
+    let page_count = pdf.page_count().with_context(|| format!("loading {name}"))?;
+    let as_json = matches!(cli.format, OutputFormat::Json);
+
+    let mut pages = Vec::new();
+    for page in 1..=page_count {
+        let image = pdf
+            .render_page(page, cli.dpi)
+            .with_context(|| format!("rendering page {page} of {name}"))?;
+        let result = engine
+            .recognize(&image)
+            .with_context(|| format!("OCR failed on page {page} of {name}"))?;
+        all_text.push(result.text.clone());
+
+        if as_json {
+            pages.push(PdfPageResult {
+                page,
+                width: image.width(),
+                height: image.height(),
+                result,
+            });
+        } else {
+            print_result(&result, &cli.format, Some(&format!("{name} page {page}")));
+        }
+    }
+
+    if as_json {
+        if multiple {
+            eprintln!("--- {name} ---");
+        }
+        println!("{}", serde_json::to_string_pretty(&PdfOcrResult { pages })?);
     }
 
     Ok(())

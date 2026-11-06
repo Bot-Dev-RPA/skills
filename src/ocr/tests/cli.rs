@@ -57,7 +57,7 @@ fn no_args_prints_error() {
     let out = oneocr().output().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("provide image file"));
+    assert!(stderr.contains("provide image or PDF file"));
 }
 
 // =============================================================================
@@ -374,4 +374,39 @@ fn json_confidence_in_range() {
             );
         }
     }
+}
+
+// =============================================================================
+// First-run setup under concurrency
+// =============================================================================
+
+#[test]
+fn concurrent_setup_never_exposes_a_partial_engine() {
+    let target = TempDir::new("oneocr_test_setup_concurrent");
+
+    let children: Vec<_> = (0..4)
+        .map(|_| {
+            oneocr()
+                .args(["--setup", "--engine-dir"])
+                .arg(target.path())
+                .arg(fixture("numbers.png"))
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+
+    for child in children {
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(String::from_utf8_lossy(&out.stdout).contains("12345"));
+    }
+
+    let leftovers: Vec<_> = std::fs::read_dir(target.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "temporary copies left behind: {leftovers:?}");
 }
