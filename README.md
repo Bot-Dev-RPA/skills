@@ -14,6 +14,8 @@ Then install the skills you want:
 
 ```
 /plugin install winctl@skills
+/plugin install screenshot@skills
+/plugin install ocr@skills
 ```
 
 To update installed skills later:
@@ -71,30 +73,41 @@ Capture screenshots of windows, screens, monitors, or regions. Outputs PNG files
 | Region | `/screenshot region 0,0,800,600` |
 | Custom output path | `/screenshot Chrome --output grab.png` |
 
-### [oneocr](skills/oneocr/)
+### [ocr](skills/ocr/)
 
-Offline OCR to extract text from images, screenshots, or clipboard. Uses Windows Snipping Tool's engine -- no API keys or network required.
+Free offline OCR for scanned PDFs, images, screenshots, or clipboard. Uses Windows Snipping Tool's engine -- no API keys, network, or per-page charges.
+It reads a whole PDF in one call, including scanned PDFs with no text layer. The tool itself is `oneocr.exe`, built from `src/ocr`.
 
 ```
-/oneocr photo.png
-/oneocr --clipboard
-/oneocr document.png -f json
-/oneocr table.png -f table
+/ocr scan.pdf
+/ocr photo.png
+/ocr --clipboard
+/ocr scan.pdf -f json
+/ocr table.png -f table
 ```
 
 | Command | Example |
 |---|---|
-| OCR a file | `/oneocr photo.png` |
-| Multiple files | `/oneocr scan1.png scan2.jpg` |
-| From clipboard | `/oneocr --clipboard` |
+| OCR a PDF | `/ocr scan.pdf` |
+| PDF render resolution | `/ocr scan.pdf --dpi 200` |
+| OCR an image | `/ocr photo.png` |
+| Multiple files | `/ocr scan.pdf photo.png` |
+| From clipboard | `/ocr --clipboard` |
 | From stdin | `cat image.png \| oneocr -` |
-| Copy result | `/oneocr photo.png --copy` |
-| JSON with bounding boxes | `/oneocr image.png -f json` |
-| Lines with confidence | `/oneocr image.png -f lines` |
-| Spaced columns | `/oneocr image.png -f spaced` |
-| Table detection | `/oneocr table.png -f table` |
+| Copy result | `/ocr photo.png --copy` |
+| JSON with bounding boxes | `/ocr scan.pdf -f json` |
+| Lines with confidence | `/ocr image.png -f lines` |
+| Spaced columns | `/ocr image.png -f spaced` |
+| Table detection | `/ocr table.png -f table` |
 
-All skills are Windows only. winctl and screenshot require Windows 10/11. oneocr requires Windows 11 with Snipping Tool 11.2409+.
+This skill was called `oneocr` before it read PDFs. If you installed it under that name, switch with:
+
+```
+/plugin uninstall oneocr@skills
+/plugin install ocr@skills
+```
+
+All skills are Windows only. winctl and screenshot require Windows 10/11. ocr requires Windows 11 with Snipping Tool 11.2409+.
 
 ## Contributing
 
